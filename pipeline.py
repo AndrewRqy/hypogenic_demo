@@ -13,7 +13,8 @@ from hypogenic.algorithm.update import DefaultUpdate
 from hypogenic.algorithm.replace import DefaultReplace, Replace
 from hypogenic.algorithm.inference import Inference, DefaultInference
 from hypogenic.algorithm.generation import DefaultGeneration
-from hypogenic.prompt import BasePrompt, RAGPrompt
+from hypogenic.prompt import BasePrompt
+from hypogenic.rag_prompt import RAGPrompt
 from hypogenic.logger_config import LoggerConfig
 from hypogenic.algorithm.summary_information import (
     SummaryInformation,
@@ -1282,4 +1283,5 @@ if __name__ == "__main__":
                 "timestamp": datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),
                 "total_cost_usd": total_cost
             }, f, indent=2)
+
 
