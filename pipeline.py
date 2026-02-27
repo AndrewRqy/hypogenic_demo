@@ -2,6 +2,10 @@ import datetime
 import json
 import logging
 import os
+    # --- NEW: load vector DB ---
+from langchain_community.vectorstores import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+
 from hypogenic.utils import set_seed, get_results
 from hypogenic.tasks import BaseTask
 from hypogenic.extract_label import extract_label_register
@@ -101,7 +105,19 @@ parser.add_argument("--use_refine", action="store_true", default=False)
 parser.add_argument("--max_refine", type=int, default=6)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--use_ood", action="store_true", default=False, help="Use out-of-distribution data for testing")
+parser.add_argument(
+    "--rag_k",
+    type=int,
+    default=4,
+    help="Number of retrieved chunks to inject into the prompt"
+)
 
+parser.add_argument(
+    "--rag_max_chars",
+    type=int,
+    default=3000,
+    help="Maximum number of characters from retrieved context to inject into the prompt"
+)
 args = parser.parse_args()
 
 multihyp = args.multihyp
@@ -126,7 +142,9 @@ max_tokens = args.max_tokens
 use_refine = args.use_refine
 max_refine = args.max_refine
 seed = args.seed
-
+rag_k = args.rag_k
+rag_max_chars = args.rag_max_chars
+    
 if args.literature_folder is None:
     literature_folder = args.task_name
 else:
@@ -408,19 +426,14 @@ def rag_hypogenic(task_name, api, model_name):
         use_ood=use_ood
     )
 
-    # --- NEW: load vector DB ---
-    from langchain_community.vectorstores import Chroma
-    from langchain_huggingface import HuggingFaceEmbeddings
-
     embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embedding_model)
 
     set_seed(seed)
     train_data, _, _ = task.get_data(num_train, num_test, num_val, seed)
 
-    # --- CHANGED: use your RAG-enabled prompt class ---
-    # This must be the class where you inject literature into prompt[1]["content"]
-    prompt_class = RAGPrompt(task, vectorstore=vectorstore, rag_k=4, rag_max_chars=3000)
+
+    prompt_class = RAGPrompt(task, vectorstore=vectorstore, rag_k=rag_k, rag_max_chars=rag_max_chars)
 
     inference_class = DefaultInference(api, prompt_class, train_data, task)
     generation_class = DefaultGeneration(api, prompt_class, inference_class, task)
@@ -1283,5 +1296,4 @@ if __name__ == "__main__":
                 "timestamp": datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),
                 "total_cost_usd": total_cost
             }, f, indent=2)
-
 
