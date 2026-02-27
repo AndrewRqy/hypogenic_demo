@@ -23,7 +23,7 @@ Key parameters:
 A variant of the HypoGeniC runner that wires in:
 - a `vectorstore` for retrieval,
 - `RAGPrompt` for generation,
-- standard HypoGeniC multi-hypothesis inference for evaluation (unless you changed this elsewhere).
+- standard HypoGeniC multi-hypothesis inference for evaluation.
 
 ### 3) `Retrieval Module` (rag.py)
 
