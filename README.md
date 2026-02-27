@@ -72,3 +72,15 @@ python rag.py \
   --chunk_size 800 \
   --chunk_overlap 100
 ```
+
+## Example Usage: Running RAG_HypoGeniC
+
+The following arguments are **specific to the RAG-enabled HypoGeniC** mode.
+
+
+```bash
+python pipeline.py \
+  --run_hypogenic_rag \
+  --rag_k 4 \
+  --rag_max_chars 3000
+```
