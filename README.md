@@ -42,4 +42,33 @@ Key components:
 - persistent storage directory for saving / reloading indices.
 ---
 
-##Example usage:
+## Example Usage: Building the RAG Vector Database
+
+`rag.py` builds a Chroma vector database from a directory of PDF files.
+
+### Basic Usage
+
+```bash
+python rag.py \
+  --pdf_dir data/literature \
+  --persist_directory ./chroma_db
+```
+
+This will:
+
+1. Load all `.pdf` files in `data/literature`
+2. Split them into chunks (default: 1000 characters, 200 overlap)
+3. Build embeddings using `sentence-transformers/all-MiniLM-L6-v2`
+4. Create and persist a Chroma vector database at `./chroma_db`
+
+---
+
+### Custom Chunking Parameters
+
+```bash
+python rag.py \
+  --pdf_dir data/literature \
+  --persist_directory ./chroma_db \
+  --chunk_size 800 \
+  --chunk_overlap 100
+```
