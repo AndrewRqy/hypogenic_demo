@@ -13,7 +13,7 @@ from hypogenic.algorithm.update import DefaultUpdate
 from hypogenic.algorithm.replace import DefaultReplace, Replace
 from hypogenic.algorithm.inference import Inference, DefaultInference
 from hypogenic.algorithm.generation import DefaultGeneration
-from hypogenic.prompt import BasePrompt
+from hypogenic.prompt import BasePrompt, RAGPrompt
 from hypogenic.logger_config import LoggerConfig
 from hypogenic.algorithm.summary_information import (
     SummaryInformation,
@@ -75,6 +75,7 @@ parser.add_argument("--run_cross_model", action="store_true", help="Run cross-mo
 parser.add_argument("--run_io_refine", action="store_true", help="Run IO iterative refinement")
 parser.add_argument("--cross_model_name", type=str, help="Name of the cross model")
 parser.add_argument("--cross_hyp_folder", type=str, help="Folder containing cross model hypotheses")
+parser.add_argument("--run_hypogenic_rag", action="store_true", help="Run RAG-enabled HypoGeniC")
 
 # All algorithm-related arguments
 parser.add_argument("--multihyp", action="store_true", default=True)
@@ -188,7 +189,7 @@ def only_paper(task_name, api, model_name):
     set_seed(seed)
 
     task = BaseTask(
-        config_path=f"./data/{task_name}/config.yaml",
+        config_path=f"./data/HypoBench-datasets/real/{task_name}/config.yaml",
         from_register=extract_label_register,
         use_ood=use_ood
     )
@@ -254,7 +255,7 @@ def with_paper(task_name, api, model_name):
     set_seed(seed)
 
     task = BaseTask(
-        config_path=f"./data/{task_name}/config.yaml",
+        config_path=f"./data/HypoBench-datasets/real/{task_name}/config.yaml",
         from_register=extract_label_register,
         use_ood=use_ood
     )
@@ -395,6 +396,71 @@ def original_hypogenic(task_name, api, model_name):
             seed=seed,
             epoch=epoch,
         )
+
+def rag_hypogenic(task_name, api, model_name):
+    output_folder = f"./results/{task_name}/{model_name}/rag_hyp_{max_num_hypotheses}/"
+    os.makedirs(output_folder, exist_ok=True)
+
+    task = BaseTask(
+        config_path=f"./data/{task_name}/config.yaml",
+        from_register=extract_label_register,
+        use_ood=use_ood
+    )
+
+    # --- NEW: load vector DB ---
+    from langchain_community.vectorstores import Chroma
+    from langchain_huggingface import HuggingFaceEmbeddings
+
+    embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embedding_model)
+
+    set_seed(seed)
+    train_data, _, _ = task.get_data(num_train, num_test, num_val, seed)
+
+    # --- CHANGED: use your RAG-enabled prompt class ---
+    # This must be the class where you inject literature into prompt[1]["content"]
+    prompt_class = RAGPrompt(task, vectorstore=vectorstore, rag_k=4, rag_max_chars=3000)
+
+    inference_class = DefaultInference(api, prompt_class, train_data, task)
+    generation_class = DefaultGeneration(api, prompt_class, inference_class, task)
+
+    update_class = DefaultUpdate(
+        generation_class=generation_class,
+        inference_class=inference_class,
+        replace_class=DefaultReplace(max_num_hypotheses),
+        save_path=output_folder,
+        num_init=num_init,
+        k=k,
+        alpha=alpha,
+        update_batch_size=update_batch_size,
+        update_hypotheses_per_batch=update_hypotheses_per_batch,
+        num_hypotheses_to_update=num_hypotheses_to_update,
+        save_every_n_examples=save_every_10_examples,
+    )
+
+    hypotheses_bank = update_class.batched_initialize_hypotheses(
+        num_init,
+        init_batch_size=init_batch_size,
+        init_hypotheses_per_batch=init_hypotheses_per_batch,
+        cache_seed=cache_seed,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        max_concurrent=64,
+    )
+    update_class.save_to_json(hypotheses_bank, sample=num_init, seed=seed, epoch=0)
+
+    for epoch in range(1):
+        hypotheses_bank = update_class.update(
+            current_epoch=epoch,
+            hypotheses_bank=hypotheses_bank,
+            current_seed=seed,
+            cache_seed=cache_seed,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_concurrent=64,
+        )
+        update_class.save_to_json(hypotheses_bank, sample="final", seed=seed, epoch=epoch)
+
 
 def IO_iterative_refinement(task_name, api, model_name):
     output_folder = f"./results/{task_name}/{model_name}/IO_refinement/"
@@ -875,7 +941,8 @@ def log_arguments(logger, args):
             ("Run Union HypoGeniC", args.run_union_hypo),
             ("Run Union HypoRefine", args.run_union_refine),
             ("Run Cross Model", args.run_cross_model),
-            ("Run IO Refine", args.run_io_refine)
+            ("Run IO Refine", args.run_io_refine),
+            ("Run RAG HypoGeniC", args.run_hypogenic_rag),
         ],
         "Algorithm Configuration": [
             ("Multi Hypothesis", multihyp),
@@ -1029,6 +1096,40 @@ if __name__ == "__main__":
         logger.info("=-=-=-=-=-=-=-=-=-=-=-=With Update=-=-=-=-=-=-=-=-=-=-=-=")
         results = get_res(
             f"results/{task_name}/{model_name}/hyp_{max_num_hypotheses}/hypotheses_training_sample_final_seed_{seed}_epoch_0.json",
+            task_name=task_name,
+            api=api,
+            model_name=model_name,
+            use_val=use_val,
+            multihyp=multihyp,
+        )
+        save_method_results(method_name, results, task_name, model_name, seed, use_ood=use_ood)
+
+    if args.run_hypogenic_rag:
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=RAG HypoGeniC=-=-=-=-=-=-=-=-=-=-=-=")
+
+        if DO_TRAIN:
+            rag_hypogenic(task_name=task_name, api=api, model_name=model_name)
+
+        rag_base_dir = f"results/{task_name}/{model_name}/rag_hyp_{max_num_hypotheses}"
+
+        method_name = "hypogenic_rag_no_update"
+        methods_run.append(method_name)
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=RAG No Update=-=-=-=-=-=-=-=-=-=-=-=")
+        results = get_res(
+            f"{rag_base_dir}/hypotheses_training_sample_10_seed_{seed}_epoch_0.json",
+            task_name=task_name,
+            api=api,
+            model_name=model_name,
+            use_val=use_val,
+            multihyp=multihyp,
+        )
+        save_method_results(method_name, results, task_name, model_name, seed, use_ood=use_ood)
+
+        method_name = "hypogenic_rag"
+        methods_run.append(method_name)
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=RAG With Update=-=-=-=-=-=-=-=-=-=-=-=")
+        results = get_res(
+            f"{rag_base_dir}/hypotheses_training_sample_final_seed_{seed}_epoch_0.json",
             task_name=task_name,
             api=api,
             model_name=model_name,
